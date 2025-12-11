@@ -8,7 +8,8 @@ import requests
 class Database:
     #Connecting to Supabase on Instance of Database Class 
     def __init__(self):
-        self.client : Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        self.client: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+
 
     #Inter One record into a Table
     def insertOne(self,table:str, **kargs):
