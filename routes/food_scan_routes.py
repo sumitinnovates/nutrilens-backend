@@ -6,40 +6,91 @@ from helpers import clean_analysis_result_str
 
 router = APIRouter()
 
-
 @router.post("/analyze")
-async def analyze(img: UploadFile = File(...) ,user=Depends(auth.get_current_user)):
-    image_bytes = await img.read()
-    result = analyze_image(image_bytes)
+async def analyze(img: UploadFile = File(...), user=Depends(auth.get_current_user)):
+    # 1. Read image
+    try:
+        image_bytes = await img.read()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to read uploaded image")
+
+    # 2. Analyze image with Gemini
+    try:
+        result = analyze_image(image_bytes)
+    except Exception as e:
+        print("Gemini analyze_image error:", str(e))
+        raise HTTPException(status_code=500, detail="Image analysis failed")
+
+    # 3. Handle Gemini quota or errors
+    if result is None:
+        raise HTTPException(
+            status_code=429,
+            detail="Gemini quota exceeded or returned no result"
+        )
+
     json_result = clean_analysis_result_str(result)
-    recommend_result = recommend_food(result)
+
+    # 4. Recommendation via Gemini
+    try:
+        recommend_result = recommend_food(result)
+    except Exception as e:
+        print("Gemini recommend_food error:", str(e))
+        recommend_result = None
+
     json_recommendation = clean_analysis_result_str(recommend_result)
     print("Recommendation result:", json_recommendation)
-    
+
+    # 5. Upload image to Supabase Storage
     response = storage.upload_file(image_bytes, img.filename)
-    
-    # Example: Gemini result is a dict with keys: name, calories, protein, etc.
-    if result and response and recommend_result:
+    print("Upload response:", response)
+
+    # 6. Validate Storage upload
+    if not response or "public_url" not in response:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Storage upload failed: {response}"
+        )
+
+    public_url = response.get("public_url")
+
+    # 7. Save scan record in DB
+    try:
         scan = FoodScan.create(
             user_id=user.user.id,
-            image_url= response['public_url'],
-            nutrients=result,
+            image_url=public_url,
+            nutrients=result
         )
-        food = scan['data'][0]
-        print(f" data : {food }, and food id {food.get('id')}")
-        if scan:
-            recommend = Recommendation.create(
+    except Exception as e:
+        print("DB scan create error:", str(e))
+        raise HTTPException(status_code=500, detail="Failed to save scan to database")
+
+    # Extract scan ID from supabase data
+    try:
+        food = scan["data"][0]
+        food_id = food.get("id")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Invalid scan response from database")
+
+    # 8. Save recommendation
+    if recommend_result:
+        try:
+            Recommendation.create(
                 user_id=user.user.id,
-                food_id=food.get('id'),
+                food_id=food_id,
                 recommendation=recommend_result
             )
-            return {
-                "status": "success",
-                "result": json_result,
-                "image_url": response['public_url'],
-            }
+        except Exception as e:
+            print("Recommendation DB error:", e)
 
-        raise HTTPException(status_code=500, detail="Error analyzing image or uploading file")
+    # 9. Success Response
+    return {
+        "status": "success",
+        "result": json_result,
+        "recommendation": json_recommendation,
+        "image_url": public_url,
+        "food_id": food_id,
+    }
+
 
 #get all scans for a user and url is /scans/scans because of the prefix
 @router.get("/scans")
