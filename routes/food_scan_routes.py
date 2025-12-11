@@ -16,13 +16,13 @@ async def analyze(img: UploadFile = File(...) ,user=Depends(auth.get_current_use
     json_recommendation = clean_analysis_result_str(recommend_result)
     print("Recommendation result:", json_recommendation)
     
-    resnopse = storage.upload_file(image_bytes, img.filename)
+    response = storage.upload_file(image_bytes, img.filename)
     
     # Example: Gemini result is a dict with keys: name, calories, protein, etc.
-    if result and resnopse and recommend_result:
+    if result and response and recommend_result:
         scan = FoodScan.create(
             user_id=user.user.id,
-            image_url= resnopse['public_url'],
+            image_url= response['public_url'],
             nutrients=result,
         )
         food = scan['data'][0]
@@ -36,7 +36,7 @@ async def analyze(img: UploadFile = File(...) ,user=Depends(auth.get_current_use
             return {
                 "status": "success",
                 "result": json_result,
-                "image_url": resnopse['public_url'],
+                "image_url": response['public_url'],
             }
 
         raise HTTPException(status_code=500, detail="Error analyzing image or uploading file")
